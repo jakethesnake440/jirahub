@@ -1089,3 +1089,90 @@ th {
     margin-top: 8px;
   }
 }
+
+
+/* Auth / deployed v2 additions */
+.login-container {
+  width: min(440px, calc(100vw - 32px));
+  margin: 9vh auto;
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: color-mix(in srgb, var(--surface), transparent 2%);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.24);
+  display: grid;
+  gap: 14px;
+}
+
+.login-container .brand-card {
+  margin-bottom: 8px;
+}
+
+.login-container h1,
+.login-container h2 {
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+
+.login-container button {
+  margin-top: 4px;
+}
+
+.login-container .hint,
+.login-container .error {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.login-container .hint {
+  color: var(--muted);
+}
+
+.login-container .error {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.auth-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 9px 12px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.logout-button {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.password-rules {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 720px) {
+  .topbar-actions {
+    justify-content: stretch;
+  }
+
+  .topbar-actions > * {
+    width: 100%;
+  }
+}

@@ -1,19 +1,54 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using System.Text.RegularExpressions;
 using JiraHub.Api.Data;
 using JiraHub.Api.DTOs;
 using JiraHub.Api.Models;
 using JiraHub.Api.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 
 const string RoleAdmin = "ADMIN";
+const string DefaultAdminPassword = "Password@123";
 
 var builder = WebApplication.CreateBuilder(args);
 
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? "Host=postgres;Database=JiraHubDb;Username=jirahub;Password=SuperStrongPassword123";
+
 builder.Services.AddDbContext<JiraHubDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(connectionString));
 
 builder.Services.AddScoped<CsvTicketImportService>();
 builder.Services.AddScoped<MentionService>();
+
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? "ThisIsAVeryLongRandomJwtKeyForProductionUse1234567890abcdef";
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "JiraHub";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "JiraHubUsers";
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = jwtIssuer,
+            ValidAudience = jwtAudience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ClockSkew = TimeSpan.FromMinutes(2)
+        };
+    });
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(RoleAdmin, policy => policy.RequireRole(RoleAdmin));
+});
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -36,9 +71,9 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<JiraHubDbContext>();
     db.Database.EnsureCreated();
     EnsurePerformanceIndexes(db);
-    NormalizeExistingRoles(db);
+    NormalizeExistingRolesAndPasswords(db);
 
-    if (!db.AppUsers.Any())
+    if (!db.AppUsers.Any(u => u.Username == "admin"))
     {
         db.AppUsers.Add(new AppUser
         {
@@ -47,6 +82,8 @@ using (var scope = app.Services.CreateScope())
             Username = "admin",
             Role = RoleAdmin,
             IsActive = true,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(DefaultAdminPassword),
+            MustChangePassword = true,
             CreatedAt = DateTime.UtcNow
         });
         db.SaveChanges();
@@ -59,6 +96,11 @@ using (var scope = app.Services.CreateScope())
         {
             firstUser.Role = RoleAdmin;
             firstUser.IsActive = true;
+            if (string.IsNullOrWhiteSpace(firstUser.PasswordHash))
+            {
+                firstUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword(DefaultAdminPassword);
+                firstUser.MustChangePassword = true;
+            }
             db.SaveChanges();
         }
     }
@@ -68,12 +110,57 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    app.UseCors("Frontend");
 }
 
-app.UseHttpsRedirection();
-app.UseCors("Frontend");
+app.UseStaticFiles();
+app.UseAuthentication();
+app.UseAuthorization();
 
-app.MapGet("/api/health", () => Results.Ok(new { status = "ok", app = "JIRA Hub", utc = DateTime.UtcNow }));
+app.MapGet("/api/health", () => Results.Ok(new { status = "ok", app = "JIRA Hub", version = "v2-linux-ui", utc = DateTime.UtcNow }));
+
+app.MapPost("/api/auth/login", async (LoginRequest req, JiraHubDbContext db) =>
+{
+    var username = NormalizeUsername(req.Username);
+    var user = await db.AppUsers.AsNoTracking().FirstOrDefaultAsync(u => u.Username == username && u.IsActive);
+    if (user == null || string.IsNullOrWhiteSpace(user.PasswordHash) || !BCrypt.Net.BCrypt.Verify(req.Password, user.PasswordHash))
+        return Results.Unauthorized();
+
+    var token = GenerateJwtToken(user, jwtKey, jwtIssuer, jwtAudience);
+    return Results.Ok(new
+    {
+        token,
+        mustChangePassword = user.MustChangePassword,
+        user = new UserDto(user.UserId, user.DisplayName, user.Email, user.Username, user.Role, user.IsActive)
+    });
+});
+
+app.MapGet("/api/auth/me", async (ClaimsPrincipal principal, JiraHubDbContext db, CancellationToken ct) =>
+{
+    var user = await GetCurrentUserAsync(principal, db, ct);
+    if (user is null)
+        return Results.Unauthorized();
+
+    return Results.Ok(new UserDto(user.UserId, user.DisplayName, user.Email, user.Username, user.Role, user.IsActive));
+}).RequireAuthorization();
+
+app.MapPost("/api/auth/change-password", async (ChangePasswordRequest req, ClaimsPrincipal principal, JiraHubDbContext db, CancellationToken ct) =>
+{
+    var user = await GetCurrentUserAsync(principal, db, ct);
+    if (user is null)
+        return Results.Unauthorized();
+
+    if (string.IsNullOrWhiteSpace(user.PasswordHash) || !BCrypt.Net.BCrypt.Verify(req.CurrentPassword, user.PasswordHash))
+        return Results.BadRequest(new { message = "Current password is incorrect." });
+
+    if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 8)
+        return Results.BadRequest(new { message = "New password must be at least 8 characters." });
+
+    user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
+    user.MustChangePassword = false;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { message = "Password changed successfully." });
+}).RequireAuthorization();
 
 app.MapGet("/api/metadata", async (JiraHubDbContext db, CancellationToken ct) =>
 {
@@ -121,7 +208,7 @@ app.MapGet("/api/metadata", async (JiraHubDbContext db, CancellationToken ct) =>
         buildFixedValues,
         versionFoundValues
     ));
-});
+}).RequireAuthorization();
 
 app.MapGet("/api/tickets", async (
     JiraHubDbContext db,
@@ -152,21 +239,21 @@ app.MapGet("/api/tickets", async (
     {
         var like = $"%{term}%";
         query = query.Where(t =>
-            EF.Functions.Like(t.TicketKey, like) ||
-            (t.Platform != null && EF.Functions.Like(t.Platform, like)) ||
-            (t.VersionFound != null && EF.Functions.Like(t.VersionFound, like)) ||
-            (t.BuildFixed != null && EF.Functions.Like(t.BuildFixed, like)) ||
-            (t.Functionality != null && EF.Functions.Like(t.Functionality, like)) ||
-            (t.IssueTitle != null && EF.Functions.Like(t.IssueTitle, like)) ||
-            (t.Summary != null && EF.Functions.Like(t.Summary, like)) ||
-            (t.SourceInternalComments != null && EF.Functions.Like(t.SourceInternalComments, like)) ||
+            EF.Functions.ILike(t.TicketKey, like) ||
+            (t.Platform != null && EF.Functions.ILike(t.Platform, like)) ||
+            (t.VersionFound != null && EF.Functions.ILike(t.VersionFound, like)) ||
+            (t.BuildFixed != null && EF.Functions.ILike(t.BuildFixed, like)) ||
+            (t.Functionality != null && EF.Functions.ILike(t.Functionality, like)) ||
+            (t.IssueTitle != null && EF.Functions.ILike(t.IssueTitle, like)) ||
+            (t.Summary != null && EF.Functions.ILike(t.Summary, like)) ||
+            (t.SourceInternalComments != null && EF.Functions.ILike(t.SourceInternalComments, like)) ||
             t.Comments.Any(c => !c.IsDeleted &&
-                (EF.Functions.Like(c.CommentText, like) ||
-                 (c.CreatedByUser != null && EF.Functions.Like(c.CreatedByUser.DisplayName, like)) ||
-                 (c.CreatedByUser != null && EF.Functions.Like(c.CreatedByUser.Username, like)) ||
+                (EF.Functions.ILike(c.CommentText, like) ||
+                 (c.CreatedByUser != null && EF.Functions.ILike(c.CreatedByUser.DisplayName, like)) ||
+                 (c.CreatedByUser != null && EF.Functions.ILike(c.CreatedByUser.Username, like)) ||
                  c.Mentions.Any(m =>
-                    EF.Functions.Like(m.MentionedUser.DisplayName, like) ||
-                    EF.Functions.Like(m.MentionedUser.Username, like)
+                    EF.Functions.ILike(m.MentionedUser.DisplayName, like) ||
+                    EF.Functions.ILike(m.MentionedUser.Username, like)
                  )
                 )
             )
@@ -262,7 +349,7 @@ app.MapGet("/api/tickets", async (
         total,
         (int)Math.Ceiling(total / (double)pageSize)
     ));
-});
+}).RequireAuthorization();
 
 app.MapGet("/api/tickets/{ticketKey}", async (string ticketKey, JiraHubDbContext db, CancellationToken ct) =>
 {
@@ -314,11 +401,12 @@ app.MapGet("/api/tickets/{ticketKey}", async (string ticketKey, JiraHubDbContext
     );
 
     return Results.Ok(dto);
-});
+}).RequireAuthorization();
 
 app.MapPost("/api/tickets/{ticketKey}/comments", async (
     string ticketKey,
     CreateCommentRequest request,
+    ClaimsPrincipal principal,
     JiraHubDbContext db,
     MentionService mentionService,
     CancellationToken ct) =>
@@ -326,22 +414,19 @@ app.MapPost("/api/tickets/{ticketKey}/comments", async (
     if (string.IsNullOrWhiteSpace(request.CommentText))
         return Results.BadRequest(new { message = "Comment text is required." });
 
+    var actingUser = await GetCurrentUserAsync(principal, db, ct);
+    if (actingUser is null)
+        return Results.Unauthorized();
+
     var ticket = await db.Tickets.FirstOrDefaultAsync(t => t.TicketKey == ticketKey, ct);
     if (ticket is null)
         return Results.NotFound(new { message = "Ticket not found." });
-
-    if (request.CreatedByUserId.HasValue)
-    {
-        var userExists = await db.AppUsers.AnyAsync(u => u.UserId == request.CreatedByUserId.Value && u.IsActive, ct);
-        if (!userExists)
-            return Results.BadRequest(new { message = "CreatedByUserId does not match an active user." });
-    }
 
     var comment = new TicketComment
     {
         TicketId = ticket.TicketId,
         CommentText = request.CommentText.Trim(),
-        CreatedByUserId = request.CreatedByUserId,
+        CreatedByUserId = actingUser.UserId,
         IsPinned = request.IsPinned,
         CreatedAt = DateTime.UtcNow
     };
@@ -357,11 +442,12 @@ app.MapPost("/api/tickets/{ticketKey}/comments", async (
     await db.SaveChangesAsync(ct);
 
     return Results.Created($"/api/tickets/{ticketKey}", new { comment.CommentId, mentions = mentions.Count });
-});
+}).RequireAuthorization();
 
 app.MapPut("/api/comments/{commentId:int}", async (
     int commentId,
     UpdateCommentRequest request,
+    ClaimsPrincipal principal,
     JiraHubDbContext db,
     MentionService mentionService,
     CancellationToken ct) =>
@@ -377,7 +463,7 @@ app.MapPut("/api/comments/{commentId:int}", async (
     if (comment is null)
         return Results.NotFound(new { message = "Comment not found." });
 
-    if (!await CanModifyCommentAsync(comment, request.UpdatedByUserId, db, ct))
+    if (!await CanModifyCommentAsync(comment, principal, db, ct))
         return Results.Forbid();
 
     comment.CommentText = request.CommentText.Trim();
@@ -393,9 +479,9 @@ app.MapPut("/api/comments/{commentId:int}", async (
 
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { comment.CommentId, mentions = mentions.Count });
-});
+}).RequireAuthorization();
 
-app.MapDelete("/api/comments/{commentId:int}", async (int commentId, int? deletedByUserId, JiraHubDbContext db, CancellationToken ct) =>
+app.MapDelete("/api/comments/{commentId:int}", async (int commentId, ClaimsPrincipal principal, JiraHubDbContext db, CancellationToken ct) =>
 {
     var comment = await db.TicketComments
         .Include(c => c.Ticket)
@@ -404,7 +490,7 @@ app.MapDelete("/api/comments/{commentId:int}", async (int commentId, int? delete
     if (comment is null)
         return Results.NotFound();
 
-    if (!await CanModifyCommentAsync(comment, deletedByUserId, db, ct))
+    if (!await CanModifyCommentAsync(comment, principal, db, ct))
         return Results.Forbid();
 
     comment.IsDeleted = true;
@@ -412,7 +498,7 @@ app.MapDelete("/api/comments/{commentId:int}", async (int commentId, int? delete
     comment.Ticket.UpdatedAt = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
-});
+}).RequireAuthorization();
 
 app.MapGet("/api/users", async (JiraHubDbContext db, string? search, CancellationToken ct) =>
 {
@@ -422,10 +508,10 @@ app.MapGet("/api/users", async (JiraHubDbContext db, string? search, Cancellatio
     {
         var like = $"%{search.Trim()}%";
         query = query.Where(u =>
-            EF.Functions.Like(u.DisplayName, like) ||
-            EF.Functions.Like(u.Username, like) ||
-            (u.Email != null && EF.Functions.Like(u.Email, like)) ||
-            EF.Functions.Like(u.Role, like)
+            EF.Functions.ILike(u.DisplayName, like) ||
+            EF.Functions.ILike(u.Username, like) ||
+            (u.Email != null && EF.Functions.ILike(u.Email, like)) ||
+            EF.Functions.ILike(u.Role, like)
         );
     }
 
@@ -437,7 +523,7 @@ app.MapGet("/api/users", async (JiraHubDbContext db, string? search, Cancellatio
         .ToListAsync(ct);
 
     return Results.Ok(users);
-});
+}).RequireAuthorization();
 
 app.MapPost("/api/users", async (CreateUserRequest request, JiraHubDbContext db, CancellationToken ct) =>
 {
@@ -447,7 +533,7 @@ app.MapPost("/api/users", async (CreateUserRequest request, JiraHubDbContext db,
     if (string.IsNullOrWhiteSpace(request.Username))
         return Results.BadRequest(new { message = "Username is required." });
 
-    var username = request.Username.Trim().TrimStart('@').ToLowerInvariant();
+    var username = NormalizeUsername(request.Username);
     var exists = await db.AppUsers.AnyAsync(u => u.Username == username, ct);
     if (exists)
         return Results.Conflict(new { message = "Username already exists." });
@@ -459,6 +545,8 @@ app.MapPost("/api/users", async (CreateUserRequest request, JiraHubDbContext db,
         Username = username,
         Role = NormalizeRole(request.Role),
         IsActive = true,
+        PasswordHash = BCrypt.Net.BCrypt.HashPassword(DefaultAdminPassword),
+        MustChangePassword = true,
         CreatedAt = DateTime.UtcNow
     };
 
@@ -466,7 +554,7 @@ app.MapPost("/api/users", async (CreateUserRequest request, JiraHubDbContext db,
     await db.SaveChangesAsync(ct);
 
     return Results.Created($"/api/users/{user.UserId}", new UserDto(user.UserId, user.DisplayName, user.Email, user.Username, user.Role, user.IsActive));
-});
+}).RequireAuthorization(RoleAdmin);
 
 app.MapPut("/api/users/{userId:int}/role", async (int userId, UpdateUserRoleRequest request, JiraHubDbContext db, CancellationToken ct) =>
 {
@@ -478,7 +566,7 @@ app.MapPut("/api/users/{userId:int}/role", async (int userId, UpdateUserRoleRequ
     await db.SaveChangesAsync(ct);
 
     return Results.Ok(new UserDto(user.UserId, user.DisplayName, user.Email, user.Username, user.Role, user.IsActive));
-});
+}).RequireAuthorization(RoleAdmin);
 
 app.MapPost("/api/admin/import", async (
     IFormFile file,
@@ -487,11 +575,11 @@ app.MapPost("/api/admin/import", async (
     CancellationToken ct) =>
 {
     if (!file.FileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
-        return Results.BadRequest(new { message = "v1 supports CSV files only." });
+        return Results.BadRequest(new { message = "CSV files are currently supported for import." });
 
     var result = await importService.ImportAsync(file, uploadedBy, ct);
     return Results.Ok(result);
-}).DisableAntiforgery();
+}).DisableAntiforgery().RequireAuthorization(RoleAdmin);
 
 app.MapGet("/api/admin/imports", async (JiraHubDbContext db, CancellationToken ct) =>
 {
@@ -512,9 +600,42 @@ app.MapGet("/api/admin/imports", async (JiraHubDbContext db, CancellationToken c
         .ToListAsync(ct);
 
     return Results.Ok(imports);
-});
+}).RequireAuthorization();
+
+app.MapFallbackToFile("index.html");
 
 app.Run();
+
+static string GenerateJwtToken(AppUser user, string key, string issuer, string audience)
+{
+    var claims = new[]
+    {
+        new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
+        new Claim(ClaimTypes.Name, user.Username),
+        new Claim(ClaimTypes.Role, user.Role)
+    };
+
+    var tokenHandler = new JwtSecurityTokenHandler();
+    var tokenDescriptor = new SecurityTokenDescriptor
+    {
+        Subject = new ClaimsIdentity(claims),
+        Expires = DateTime.UtcNow.AddDays(7),
+        Issuer = issuer,
+        Audience = audience,
+        SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)), SecurityAlgorithms.HmacSha256Signature)
+    };
+
+    return tokenHandler.WriteToken(tokenHandler.CreateToken(tokenDescriptor));
+}
+
+static async Task<AppUser?> GetCurrentUserAsync(ClaimsPrincipal principal, JiraHubDbContext db, CancellationToken ct)
+{
+    var idValue = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (!int.TryParse(idValue, out var userId))
+        return null;
+
+    return await db.AppUsers.FirstOrDefaultAsync(u => u.UserId == userId && u.IsActive, ct);
+}
 
 static List<string> ParseSearchTerms(string? search)
 {
@@ -678,26 +799,45 @@ static string NormalizeRole(string? role)
     };
 }
 
-static void NormalizeExistingRoles(JiraHubDbContext db)
+static string NormalizeUsername(string? username) =>
+    (username ?? string.Empty).Trim().TrimStart('@').ToLowerInvariant();
+
+static void NormalizeExistingRolesAndPasswords(JiraHubDbContext db)
 {
     var users = db.AppUsers.ToList();
+    var changed = false;
+
     foreach (var user in users)
     {
         var normalized = NormalizeRole(user.Role);
         if (user.Role != normalized)
+        {
             user.Role = normalized;
+            changed = true;
+        }
+
+        var normalizedUsername = NormalizeUsername(user.Username);
+        if (user.Username != normalizedUsername)
+        {
+            user.Username = normalizedUsername;
+            changed = true;
+        }
+
+        if (string.IsNullOrWhiteSpace(user.PasswordHash))
+        {
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(DefaultAdminPassword);
+            user.MustChangePassword = true;
+            changed = true;
+        }
     }
 
-    if (users.Count > 0)
+    if (changed)
         db.SaveChanges();
 }
 
-static async Task<bool> CanModifyCommentAsync(TicketComment comment, int? actingUserId, JiraHubDbContext db, CancellationToken ct)
+static async Task<bool> CanModifyCommentAsync(TicketComment comment, ClaimsPrincipal principal, JiraHubDbContext db, CancellationToken ct)
 {
-    if (!actingUserId.HasValue)
-        return comment.CreatedByUserId is null;
-
-    var user = await db.AppUsers.AsNoTracking().FirstOrDefaultAsync(u => u.UserId == actingUserId.Value && u.IsActive, ct);
+    var user = await GetCurrentUserAsync(principal, db, ct);
     if (user is null)
         return false;
 
@@ -711,11 +851,11 @@ static void EnsurePerformanceIndexes(JiraHubDbContext db)
 {
     var statements = new[]
     {
-        "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_TicketComments_TicketId_IsDeleted_CreatedAt' AND object_id = OBJECT_ID('dbo.TicketComments')) CREATE INDEX IX_TicketComments_TicketId_IsDeleted_CreatedAt ON dbo.TicketComments (TicketId, IsDeleted, CreatedAt DESC)",
-        "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Tickets_UpdatedAt' AND object_id = OBJECT_ID('dbo.Tickets')) CREATE INDEX IX_Tickets_UpdatedAt ON dbo.Tickets (UpdatedAt DESC)",
-        "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Tickets_BuildFixed_UpdatedAt' AND object_id = OBJECT_ID('dbo.Tickets')) CREATE INDEX IX_Tickets_BuildFixed_UpdatedAt ON dbo.Tickets (BuildFixed, UpdatedAt DESC)",
-        "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AppUsers_Role' AND object_id = OBJECT_ID('dbo.AppUsers')) CREATE INDEX IX_AppUsers_Role ON dbo.AppUsers (Role)",
-        "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_TicketCommentMentions_MentionedUserId' AND object_id = OBJECT_ID('dbo.TicketCommentMentions')) CREATE INDEX IX_TicketCommentMentions_MentionedUserId ON dbo.TicketCommentMentions (MentionedUserId)"
+        "CREATE INDEX IF NOT EXISTS \"IX_TicketComments_TicketId_IsDeleted_CreatedAt\" ON \"TicketComments\" (\"TicketId\", \"IsDeleted\", \"CreatedAt\" DESC)",
+        "CREATE INDEX IF NOT EXISTS \"IX_Tickets_UpdatedAt\" ON \"Tickets\" (\"UpdatedAt\" DESC)",
+        "CREATE INDEX IF NOT EXISTS \"IX_Tickets_BuildFixed_UpdatedAt\" ON \"Tickets\" (\"BuildFixed\", \"UpdatedAt\" DESC)",
+        "CREATE INDEX IF NOT EXISTS \"IX_AppUsers_Role\" ON \"AppUsers\" (\"Role\")",
+        "CREATE INDEX IF NOT EXISTS \"IX_TicketCommentMentions_MentionedUserId\" ON \"TicketCommentMentions\" (\"MentionedUserId\")"
     };
 
     foreach (var statement in statements)
@@ -730,3 +870,6 @@ static void EnsurePerformanceIndexes(JiraHubDbContext db)
         }
     }
 }
+
+public record LoginRequest(string Username, string Password);
+public record ChangePasswordRequest(string CurrentPassword, string NewPassword);

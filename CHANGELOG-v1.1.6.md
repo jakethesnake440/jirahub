@@ -10,3 +10,15 @@
 - Build sorting now handles numeric segments naturally, so `25.1.10` sorts after `25.1.9`.
 - Build/version filter lists place values older than major build 21 at the end.
 - Preserved the SQL Express connection string: `Server=localhost\\SQLEXPRESS03;Database=JiraHubDb;...`.
+
+
+## v2 Linux UI Integration Patch
+
+- Restored the full prior JIRA Hub UI instead of the placeholder React shell.
+- Restored all theme tokens and visual styling from the previous test app.
+- Added login, first-login password change, and logout into the prior UI shell.
+- Preserved Docker/PostgreSQL deployment structure.
+- Re-added full metadata, search, ticket detail, comment, user, and import API endpoints to the Linux backend.
+- Added authenticated same-origin `/api` requests from the frontend.
+- Added PostgreSQL-friendly case-insensitive search using `ILIKE`.
+- Preserved build normalization and numeric build sorting behavior from v1.1.6.

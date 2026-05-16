@@ -1,5 +1,5 @@
-// In dev, leave VITE_API_BASE empty so Vite proxies /api to the backend.
-// For production, same-origin /api is also preferred behind Nginx/IIS.
+// Same-origin by default for Docker/Nginx deployment.
+// In Vite dev, leave VITE_API_BASE empty so /api is proxied to the backend.
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 
 function getApiUrl(path: string) {
@@ -106,25 +106,47 @@ export interface ImportBatch {
   errorRows: number;
 }
 
+export interface LoginResponse {
+  token: string;
+  mustChangePassword: boolean;
+  user: AppUser;
+}
+
+function getAuthHeaders(): HeadersInit {
+  const token = localStorage.getItem('token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = getApiUrl(path);
+  const isFormData = init?.body instanceof FormData;
+  const headers: HeadersInit = {
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+    ...getAuthHeaders(),
+    ...(init?.headers ?? {})
+  };
 
   let res: Response;
   try {
-    res = await fetch(url, {
-      ...init,
-      headers: init?.body instanceof FormData
-        ? init.headers
-        : { 'Content-Type': 'application/json', ...(init?.headers ?? {}) }
-    });
+    res = await fetch(url, { ...init, headers });
   } catch (err) {
-    const target = API_BASE || 'Vite proxy /api -> http://localhost:5152';
-    throw new Error(`Could not reach the JIRA Hub backend API. Target: ${target}. Make sure run-backend.cmd is running and the backend shows http://localhost:5152. Details: ${err instanceof Error ? err.message : String(err)}`);
+    const target = API_BASE || 'same-origin /api or Vite proxy /api -> http://localhost:5152';
+    throw new Error(`Could not reach the JIRA Hub backend API. Target: ${target}. Details: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (res.status === 401) {
+    localStorage.removeItem('token');
+    throw new Error('Your session expired or you are not logged in. Please log in again.');
   }
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `${res.status} ${res.statusText}`);
+    try {
+      const json = JSON.parse(text);
+      throw new Error(json.message || text || `${res.status} ${res.statusText}`);
+    } catch {
+      throw new Error(text || `${res.status} ${res.statusText}`);
+    }
   }
 
   if (res.status === 204) {
@@ -143,6 +165,24 @@ function appendParam(qs: URLSearchParams, key: string, value: unknown) {
   if (value !== undefined && value !== null && value !== '') {
     qs.set(key, String(value));
   }
+}
+
+export async function login(username: string, password: string) {
+  return request<LoginResponse>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password })
+  });
+}
+
+export async function changePassword(currentPassword: string, newPassword: string) {
+  return request<{ message: string }>('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword })
+  });
+}
+
+export async function getCurrentUser() {
+  return request<AppUser>('/api/auth/me');
 }
 
 export async function getMetadata() {

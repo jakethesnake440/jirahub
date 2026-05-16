@@ -12,3 +12,30 @@ This folder contains:
 
 ## Deployment on Lightsail
 See scripts/deploy-lightsail.sh and the main conversation for steps.
+
+## UI/theme integration build
+
+This package merges the prior JIRA Hub v1.1.6 UI/theme/search/comment experience into the Linux/Docker deployment version.
+
+Included:
+
+- Full DataBank-inspired light and dark themes plus enterprise light and midnight dark.
+- Dashboard, searchable ticket list, ticket detail panel, comments, edit/delete comment controls, and admin import/user management UI.
+- JWT login with default first admin: `admin` / `Password@123`.
+- New users created in Admin start with `Password@123` and must change the password on first login.
+- PostgreSQL backend for Docker deployment.
+- Same-origin `/api` frontend calls for Docker/Nginx deployment.
+
+Deploy with:
+
+```bash
+docker compose up -d --build
+```
+
+Then open:
+
+```text
+http://<server-ip>:5152
+```
+
+Use a strong `DB_PASSWORD` and `JWT_KEY` in `.env` before deploying beyond local testing.

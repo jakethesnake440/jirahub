@@ -1,7 +1,7 @@
 FROM node:20-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/jirahub.client/package*.json ./
-RUN npm ci
+RUN npm install          # ← Changed from npm ci
 COPY frontend/jirahub.client/ ./
 RUN npm run build
 

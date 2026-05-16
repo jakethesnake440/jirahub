@@ -10,5 +10,10 @@ public class AppUser
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    // === Authentication fields ===
+    public string? PasswordHash { get; set; }
+    public bool MustChangePassword { get; set; } = true;
+
+    // === Navigation property (required by EF Core) ===
     public ICollection<TicketComment> Comments { get; set; } = new List<TicketComment>();
 }
