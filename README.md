@@ -39,3 +39,23 @@ http://<server-ip>:5152
 ```
 
 Use a strong `DB_PASSWORD` and `JWT_KEY` in `.env` before deploying beyond local testing.
+
+
+## Docker build notes
+
+The frontend build uses the public npm registry and `npm ci` so dependency installs are repeatable. The first build can still take several minutes on a small AWS instance or slow network, but later builds should be faster because Docker caches the dependency layers.
+
+Useful commands:
+
+```bash
+docker compose build --progress=plain jirahub
+docker compose up -d
+```
+
+If the build ever appears stuck on npm dependency installation, confirm the lock file is using the public npm registry:
+
+```bash
+grep -R "applied-caas\|internal.api.openai" frontend/jirahub.client/package-lock.json
+```
+
+That command should return no results.

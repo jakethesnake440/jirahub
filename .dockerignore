@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/.vite/
+**/.vs/
+**/.idea/
+**/.vscode/
+**/logs/
+**/*.log
+.git/
+.gitignore
+.env
+.env.local
