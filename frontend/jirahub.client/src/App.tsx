@@ -438,7 +438,13 @@ export default function App() {
 
   if (!token) {
     return (
-      <div className="login-container">
+      <form
+        className="login-container"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void handleLogin();
+        }}
+      >
         <div className="brand-card">
           <div className="brand-mark">JH</div>
           <div>
@@ -447,18 +453,37 @@ export default function App() {
           </div>
         </div>
         <p className="eyebrow">Sign in</p>
-        <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(); }} />
-        <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(); }} />
-        <button onClick={handleLogin}>Login</button>
+        <input
+          name="username"
+          autoComplete="username"
+          autoFocus
+          placeholder="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+        />
+        <input
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <button type="submit" disabled={!username.trim() || !password}>Login</button>
         {authError && <p className={authError.includes('successfully') ? 'hint' : 'error'}>{authError}</p>}
-        <p className="hint">Default first login: admin / Password@123</p>
-      </div>
+      </form>
     );
   }
 
   if (mustChangePassword) {
     return (
-      <div className="login-container">
+      <form
+        className="login-container"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void handlePasswordChange();
+        }}
+      >
         <div className="brand-card">
           <div className="brand-mark">JH</div>
           <div>
@@ -467,11 +492,26 @@ export default function App() {
           </div>
         </div>
         <p className="password-rules">Set a new password before using the deployed app. Use a strong password because this account controls admin functions.</p>
-        <input type="password" placeholder="Current password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        <input type="password" placeholder="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-        <button onClick={handlePasswordChange}>Change Password</button>
+        <input
+          name="current-password"
+          type="password"
+          autoComplete="current-password"
+          autoFocus
+          placeholder="Current password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <input
+          name="new-password"
+          type="password"
+          autoComplete="new-password"
+          placeholder="New password"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+        />
+        <button type="submit" disabled={!password || !newPassword.trim()}>Change Password</button>
         {authError && <p className="error">{authError}</p>}
-      </div>
+      </form>
     );
   }
 
@@ -596,14 +636,29 @@ export default function App() {
           <section className="search-layout">
             <div className="search-column">
               <div className="filter-card">
-                <div className="search-box">
+                <form
+                  className="search-box"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setPage(1);
+                    void loadTickets();
+                  }}
+                >
                   <Search size={18} />
                   <input
                     value={search}
                     onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        setSearch('');
+                        setPage(1);
+                      }
+                    }}
                     placeholder="Search ticket key, issue title, summary, imported comments, app comments, @mentions..."
+                    aria-label="Search tickets"
                   />
-                </div>
+                  <button type="submit" className="sr-only">Search</button>
+                </form>
 
                 <div className="filter-toolbar">
                   <label className="toggle-row">
@@ -763,16 +818,22 @@ export default function App() {
                 <UserPlus size={22} />
               </div>
               <p className="mention-hint">New users start with Password@123 and must change it on first login.</p>
-              <div className="user-form">
+              <form
+                className="user-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void handleCreateUser();
+                }}
+              >
                 <input placeholder="Display name" value={newUser.displayName} onChange={(e) => setNewUser({ ...newUser, displayName: e.target.value })} />
-                <input placeholder="Email" value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} />
+                <input type="email" placeholder="Email" value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} />
                 <input placeholder="Username, ex: brian" value={newUser.username} onChange={(e) => setNewUser({ ...newUser, username: e.target.value })} />
                 <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value as NewUserForm['role'] })}>
                   <option value="END USER">END USER</option>
                   <option value="ADMIN">ADMIN</option>
                 </select>
-                <button onClick={handleCreateUser}>Create User</button>
-              </div>
+                <button type="submit" disabled={!newUser.displayName.trim() || !newUser.username.trim()}>Create User</button>
+              </form>
               <div className="user-list">
                 {users.map(user => (
                   <div className="user-row" key={user.userId}>
@@ -850,10 +911,15 @@ function MultiFilter({ label, emptyLabel, values, selected, onChange }: MultiFil
         <strong>{listSummary(selected, emptyLabel)}</strong>
       </summary>
       <div className="multi-filter-menu">
-        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={`Filter ${label.toLowerCase()}...`} />
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setFilter(''); }}
+          placeholder={`Filter ${label.toLowerCase()}...`}
+        />
         <div className="multi-filter-actions">
-          <button className="secondary" onClick={(e) => { e.preventDefault(); onChange([]); }}>Clear</button>
-          <button className="secondary" onClick={(e) => { e.preventDefault(); onChange(values); }}>Select all</button>
+          <button type="button" className="secondary" onClick={(e) => { e.preventDefault(); onChange([]); }}>Clear</button>
+          <button type="button" className="secondary" onClick={(e) => { e.preventDefault(); onChange(values); }}>Select all</button>
         </div>
         <div className="multi-options">
           {filteredValues.map(value => (
@@ -979,11 +1045,20 @@ function TicketDetailPanel({
           <textarea
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
-            placeholder="Add internal comment... Use @username to mention someone. Comments are searchable."
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && commentText.trim()) {
+                e.preventDefault();
+                onAddComment();
+              }
+              if (e.key === 'Escape') {
+                setCommentText('');
+              }
+            }}
+            placeholder="Add internal comment... Use @username to mention someone. Ctrl+Enter posts. Comments are searchable."
           />
           <div className="composer-actions">
             <span className="auth-chip">Posting as {currentUser?.displayName ?? 'current user'}</span>
-            <button disabled={!commentText.trim()} onClick={onAddComment}>Post Comment</button>
+            <button type="button" disabled={!commentText.trim()} onClick={onAddComment}>Post Comment</button>
           </div>
           {currentUser && <p className="mention-hint">Current user: {currentUser.displayName} · {roleLabel(currentUser.role)}</p>}
           {users.length > 0 && (
@@ -1012,10 +1087,23 @@ function TicketDetailPanel({
 
                 {isEditing ? (
                   <div className="comment-edit-box">
-                    <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} />
+                    <textarea
+                      value={editingText}
+                      onChange={(e) => setEditingText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && editingText.trim()) {
+                          e.preventDefault();
+                          saveEdit();
+                        }
+                        if (e.key === 'Escape') {
+                          e.preventDefault();
+                          cancelEdit();
+                        }
+                      }}
+                    />
                     <div className="comment-actions">
-                      <button onClick={saveEdit} disabled={!editingText.trim()}><Save size={14} /> Save</button>
-                      <button className="secondary" onClick={cancelEdit}><X size={14} /> Cancel</button>
+                      <button type="button" onClick={saveEdit} disabled={!editingText.trim()}><Save size={14} /> Save</button>
+                      <button type="button" className="secondary" onClick={cancelEdit}><X size={14} /> Cancel</button>
                     </div>
                   </div>
                 ) : (
