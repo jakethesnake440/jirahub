@@ -8,7 +8,7 @@ public class AppUser
     public string Username { get; set; } = string.Empty;
     public string Role { get; set; } = "END USER";
     public bool IsActive { get; set; } = true;
-    public string? PasswordHash { get; set; }
-    public bool MustChangePassword { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public ICollection<TicketComment> Comments { get; set; } = new List<TicketComment>();
 }

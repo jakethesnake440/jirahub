@@ -11,7 +11,6 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
     depends_on:
       - postgres
-
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -21,6 +20,5 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-
 volumes:
   postgres_data:

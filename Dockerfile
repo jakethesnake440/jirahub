@@ -1,4 +1,3 @@
-# Complete clean Dockerfile for JIRA Hub v2
 FROM node:20-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/jirahub.client/package*.json ./
