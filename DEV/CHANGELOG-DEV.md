@@ -29,3 +29,10 @@
 
 - Added `CommentAuthorContact` to the comment model.
 - Startup now attempts to add the column automatically to existing PostgreSQL databases.
+
+
+## Admin hidden / stable Postgres volume update
+
+- Removed visible Admin Login links/buttons from the public app. Admin remains available directly at `/admin`.
+- Added explicit Docker volume name `jirahubdev_postgres_data` so PostgreSQL data persists consistently across rebuilds and folder/project-name changes.
+- Removed obsolete docker-compose `version` attribute.

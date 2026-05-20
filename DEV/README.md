@@ -38,3 +38,12 @@ http://<server-ip>:5152/admin
 - Use a strong `DB_PASSWORD` and `JWT_KEY` in `.env` before deploying beyond testing.
 - The backend adds the new `CommentAuthorContact` column automatically for existing PostgreSQL containers.
 - The frontend build uses the public npm registry and `npm ci` for repeatable Docker builds.
+
+
+## Admin Access
+
+The public app does not display an admin link. Browse directly to `/admin` to access the admin console.
+
+## PostgreSQL Data Persistence
+
+The Docker Compose file uses the explicit named Docker volume `jirahubdev_postgres_data`. Normal rebuilds with `docker compose up -d --build` keep the database. Avoid `docker compose down -v` unless you intentionally want to delete the database volume.

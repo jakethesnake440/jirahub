@@ -569,11 +569,7 @@ export default function App() {
           {!isAdminRoute && <button className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>Dashboard</button>}
           {!isAdminRoute && <button className={view === 'search' ? 'active' : ''} onClick={() => setView('search')}>Search</button>}
           {isAdminRoute && isAdmin && <button className="active" onClick={() => setView('admin')}>Admin Console</button>}
-          {isAdminRoute ? (
-            <button onClick={() => { window.location.href = '/'; }}>Public Search</button>
-          ) : (
-            <button onClick={() => { window.location.href = '/admin'; }}>Admin Login</button>
-          )}
+          {isAdminRoute && <button onClick={() => { window.location.href = '/'; }}>Public Search</button>}
         </nav>
 
         <div className="user-switcher">
@@ -622,11 +618,7 @@ export default function App() {
             <button className="secondary" onClick={() => { refreshMetadata(); loadTickets(); }}>
               <RefreshCcw size={16} /> Refresh
             </button>
-            {isAdminRoute ? (
-              <button className="secondary logout-button" onClick={handleLogout}>Logout</button>
-            ) : (
-              <button className="secondary" onClick={() => { window.location.href = '/admin'; }}>Admin Login</button>
-            )}
+            {isAdminRoute && <button className="secondary logout-button" onClick={handleLogout}>Logout</button>}
           </div>
         </header>
 
