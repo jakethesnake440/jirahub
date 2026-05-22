@@ -569,7 +569,6 @@ export default function App() {
 
       <main className="main-panel">
         <header className="topbar">          <div>
-         //  <p className="eyebrow">Docker/PostgreSQL powered</p> //
             <h2>{view === 'dashboard' ? 'Dashboard' : view === 'search' ? 'Search JIRAs/SCRs' : 'Admin Console'}</h2>
           </div>
           <div className="topbar-actions">
