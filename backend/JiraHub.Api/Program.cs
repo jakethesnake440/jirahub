@@ -70,6 +70,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<JiraHubDbContext>();
     db.Database.EnsureCreated();
+    EnsureSchemaUpdates(db);
     EnsurePerformanceIndexes(db);
     NormalizeExistingRolesAndPasswords(db);
 
@@ -208,7 +209,7 @@ app.MapGet("/api/metadata", async (JiraHubDbContext db, CancellationToken ct) =>
         buildFixedValues,
         versionFoundValues
     ));
-}).RequireAuthorization();
+});
 
 app.MapGet("/api/tickets", async (
     JiraHubDbContext db,
@@ -249,6 +250,7 @@ app.MapGet("/api/tickets", async (
             (t.SourceInternalComments != null && EF.Functions.ILike(t.SourceInternalComments, like)) ||
             t.Comments.Any(c => !c.IsDeleted &&
                 (EF.Functions.ILike(c.CommentText, like) ||
+                 (c.CommentAuthorContact != null && EF.Functions.ILike(c.CommentAuthorContact, like)) ||
                  (c.CreatedByUser != null && EF.Functions.ILike(c.CreatedByUser.DisplayName, like)) ||
                  (c.CreatedByUser != null && EF.Functions.ILike(c.CreatedByUser.Username, like)) ||
                  c.Mentions.Any(m =>
@@ -349,7 +351,7 @@ app.MapGet("/api/tickets", async (
         total,
         (int)Math.Ceiling(total / (double)pageSize)
     ));
-}).RequireAuthorization();
+});
 
 app.MapGet("/api/tickets/{ticketKey}", async (string ticketKey, JiraHubDbContext db, CancellationToken ct) =>
 {
@@ -387,6 +389,7 @@ app.MapGet("/api/tickets/{ticketKey}", async (string ticketKey, JiraHubDbContext
                 c.CreatedByUserId,
                 c.CreatedByUser?.DisplayName,
                 c.CreatedByUser?.Username,
+                c.CommentAuthorContact,
                 c.CreatedAt,
                 c.UpdatedAt,
                 c.IsPinned,
@@ -401,7 +404,7 @@ app.MapGet("/api/tickets/{ticketKey}", async (string ticketKey, JiraHubDbContext
     );
 
     return Results.Ok(dto);
-}).RequireAuthorization();
+});
 
 app.MapPost("/api/tickets/{ticketKey}/comments", async (
     string ticketKey,
@@ -414,9 +417,9 @@ app.MapPost("/api/tickets/{ticketKey}/comments", async (
     if (string.IsNullOrWhiteSpace(request.CommentText))
         return Results.BadRequest(new { message = "Comment text is required." });
 
-    var actingUser = await GetCurrentUserAsync(principal, db, ct);
-    if (actingUser is null)
-        return Results.Unauthorized();
+    AppUser? actingUser = null;
+    if (principal.Identity?.IsAuthenticated == true)
+        actingUser = await GetCurrentUserAsync(principal, db, ct);
 
     var ticket = await db.Tickets.FirstOrDefaultAsync(t => t.TicketKey == ticketKey, ct);
     if (ticket is null)
@@ -426,7 +429,8 @@ app.MapPost("/api/tickets/{ticketKey}/comments", async (
     {
         TicketId = ticket.TicketId,
         CommentText = request.CommentText.Trim(),
-        CreatedByUserId = actingUser.UserId,
+        CommentAuthorContact = NormalizeContact(request.CommentAuthorContact),
+        CreatedByUserId = actingUser?.UserId,
         IsPinned = request.IsPinned,
         CreatedAt = DateTime.UtcNow
     };
@@ -442,7 +446,7 @@ app.MapPost("/api/tickets/{ticketKey}/comments", async (
     await db.SaveChangesAsync(ct);
 
     return Results.Created($"/api/tickets/{ticketKey}", new { comment.CommentId, mentions = mentions.Count });
-}).RequireAuthorization();
+});
 
 app.MapPut("/api/comments/{commentId:int}", async (
     int commentId,
@@ -479,7 +483,7 @@ app.MapPut("/api/comments/{commentId:int}", async (
 
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { comment.CommentId, mentions = mentions.Count });
-}).RequireAuthorization();
+}).RequireAuthorization(RoleAdmin);
 
 app.MapDelete("/api/comments/{commentId:int}", async (int commentId, ClaimsPrincipal principal, JiraHubDbContext db, CancellationToken ct) =>
 {
@@ -498,7 +502,31 @@ app.MapDelete("/api/comments/{commentId:int}", async (int commentId, ClaimsPrinc
     comment.Ticket.UpdatedAt = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization(RoleAdmin);
+
+
+app.MapGet("/api/mention-users", async (JiraHubDbContext db, string? search, CancellationToken ct) =>
+{
+    var query = db.AppUsers.AsNoTracking().Where(u => u.IsActive);
+
+    if (!string.IsNullOrWhiteSpace(search))
+    {
+        var like = $"%{search.Trim()}%";
+        query = query.Where(u =>
+            EF.Functions.ILike(u.DisplayName, like) ||
+            EF.Functions.ILike(u.Username, like)
+        );
+    }
+
+    var users = await query
+        .OrderByDescending(u => u.Role == RoleAdmin)
+        .ThenBy(u => u.DisplayName)
+        .Take(100)
+        .Select(u => new UserDto(u.UserId, u.DisplayName, null, u.Username, u.Role, u.IsActive))
+        .ToListAsync(ct);
+
+    return Results.Ok(users);
+});
 
 app.MapGet("/api/users", async (JiraHubDbContext db, string? search, CancellationToken ct) =>
 {
@@ -523,7 +551,7 @@ app.MapGet("/api/users", async (JiraHubDbContext db, string? search, Cancellatio
         .ToListAsync(ct);
 
     return Results.Ok(users);
-}).RequireAuthorization();
+}).RequireAuthorization(RoleAdmin);
 
 app.MapPost("/api/users", async (CreateUserRequest request, JiraHubDbContext db, CancellationToken ct) =>
 {
@@ -600,7 +628,7 @@ app.MapGet("/api/admin/imports", async (JiraHubDbContext db, CancellationToken c
         .ToListAsync(ct);
 
     return Results.Ok(imports);
-}).RequireAuthorization();
+}).RequireAuthorization(RoleAdmin);
 
 app.MapFallbackToFile("index.html");
 
@@ -788,6 +816,16 @@ static int ScoreSearchResult(TicketListItemDto ticket, List<string> terms, strin
         !string.IsNullOrWhiteSpace(value) && value.Contains(term, StringComparison.OrdinalIgnoreCase);
 }
 
+
+static string? NormalizeContact(string? contact)
+{
+    if (string.IsNullOrWhiteSpace(contact))
+        return null;
+
+    var trimmed = contact.Trim();
+    return trimmed.Length > 255 ? trimmed[..255] : trimmed;
+}
+
 static string NormalizeRole(string? role)
 {
     var value = (role ?? string.Empty).Trim().ToUpperInvariant();
@@ -845,6 +883,26 @@ static async Task<bool> CanModifyCommentAsync(TicketComment comment, ClaimsPrinc
         return true;
 
     return comment.CreatedByUserId == user.UserId;
+}
+
+static void EnsureSchemaUpdates(JiraHubDbContext db)
+{
+    var statements = new[]
+    {
+        "ALTER TABLE \"TicketComments\" ADD COLUMN IF NOT EXISTS \"CommentAuthorContact\" character varying(255)"
+    };
+
+    foreach (var statement in statements)
+    {
+        try
+        {
+            db.Database.ExecuteSqlRaw(statement);
+        }
+        catch
+        {
+            // Best effort schema compatibility for existing test/dev containers.
+        }
+    }
 }
 
 static void EnsurePerformanceIndexes(JiraHubDbContext db)

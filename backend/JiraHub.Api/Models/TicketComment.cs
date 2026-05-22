@@ -8,6 +8,7 @@ public class TicketComment
 
     public string CommentText { get; set; } = string.Empty;
     public string? CommentHtml { get; set; }
+    public string? CommentAuthorContact { get; set; }
     public int? CreatedByUserId { get; set; }
     public AppUser? CreatedByUser { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

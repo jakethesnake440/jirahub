@@ -47,6 +47,7 @@ CREATE TABLE dbo.TicketComments (
     TicketId INT NOT NULL,
     CommentText NVARCHAR(MAX) NOT NULL,
     CommentHtml NVARCHAR(MAX) NULL,
+    CommentAuthorContact NVARCHAR(255) NULL,
     CreatedByUserId INT NULL,
     CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedAt DATETIME2 NULL,
@@ -110,3 +111,9 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AppUsers_Role' AND obj
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_TicketCommentMentions_MentionedUserId' AND object_id = OBJECT_ID('dbo.TicketCommentMentions'))
     CREATE INDEX IX_TicketCommentMentions_MentionedUserId ON dbo.TicketCommentMentions (MentionedUserId);
+
+
+-- DEV update: public comments can include an optional username/email follow-up contact.
+IF COL_LENGTH('dbo.TicketComments', 'CommentAuthorContact') IS NULL
+    ALTER TABLE dbo.TicketComments ADD CommentAuthorContact NVARCHAR(255) NULL;
+GO

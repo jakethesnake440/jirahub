@@ -1,61 +1,49 @@
-# JIRA Hub v2 - Complete Package
+# JIRA Hub DEV Build
 
-This folder contains:
-- Full backend with authentication (JWT + password change on first login)
-- Frontend (React)
-- Docker support for easy deployment on Lightsail
+This DEV package is the Linux/Docker/PostgreSQL version of JIRA Hub with the prior UI/theme system integrated.
 
-## Quick Start (Local)
-1. Copy your full original frontend into `frontend/jirahub.client/` if missing.
-2. Create `.env` from `.env.example`
-3. Run `docker compose up -d --build`
+## Current behavior
 
-## Deployment on Lightsail
-See scripts/deploy-lightsail.sh and the main conversation for steps.
+- `/` is the public main app.
+- Dashboard, search, ticket detail, and adding comments are available without logging in.
+- `/admin` is the admin console and requires an ADMIN login.
+- Admin users can upload/import CSV files, manage users, view import history, and delete comments.
+- Public comments support an optional username/email field labeled for follow-up.
+- Ticket detail includes a Copy ticket details button that copies a clean text block for Notepad, Salesforce cases, or support notes.
+- Public search includes ticket fields, imported internal comments, app comments, comment contact text, and mentions.
 
-## UI/theme integration build
+## Deploy
 
-This package merges the prior JIRA Hub v1.1.6 UI/theme/search/comment experience into the Linux/Docker deployment version.
-
-Included:
-
-- Full DataBank-inspired light and dark themes plus enterprise light and midnight dark.
-- Dashboard, searchable ticket list, ticket detail panel, comments, edit/delete comment controls, and admin import/user management UI.
-- JWT login with default first admin: `admin` / `Password@123`.
-- New users created in Admin start with `Password@123` and must change the password on first login.
-- PostgreSQL backend for Docker deployment.
-- Same-origin `/api` frontend calls for Docker/Nginx deployment.
-
-Deploy with:
+Create or update your `.env` from `.env.example`, then run:
 
 ```bash
+docker compose down
 docker compose up -d --build
 ```
 
-Then open:
+Open the main app:
 
 ```text
-http://<server-ip>:5152
+http://<server-ip>:5152/
 ```
 
-Use a strong `DB_PASSWORD` and `JWT_KEY` in `.env` before deploying beyond local testing.
+Open the admin console:
 
-
-## Docker build notes
-
-The frontend build uses the public npm registry and `npm ci` so dependency installs are repeatable. The first build can still take several minutes on a small AWS instance or slow network, but later builds should be faster because Docker caches the dependency layers.
-
-Useful commands:
-
-```bash
-docker compose build --progress=plain jirahub
-docker compose up -d
+```text
+http://<server-ip>:5152/admin
 ```
 
-If the build ever appears stuck on npm dependency installation, confirm the lock file is using the public npm registry:
+## Notes
 
-```bash
-grep -R "applied-caas\|internal.api.openai" frontend/jirahub.client/package-lock.json
-```
+- Use a strong `DB_PASSWORD` and `JWT_KEY` in `.env` before deploying beyond testing.
+- The backend adds the new `CommentAuthorContact` column automatically for existing PostgreSQL containers.
+- The frontend build uses the public npm registry and `npm ci` for repeatable Docker builds.
 
-That command should return no results.
+
+## Admin Access
+
+The public app does not display an admin link. Browse directly to `/admin` to access the admin console.
+
+## PostgreSQL Data Persistence
+
+The Docker Compose file uses the explicit named Docker volume `jirahubdev_postgres_data`. Normal rebuilds with `docker compose up -d --build` keep the database. Avoid `docker compose down -v` unless you intentionally want to delete the database volume.

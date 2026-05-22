@@ -11,6 +11,7 @@ import {
   getImports,
   getMetadata,
   getTicket,
+  getMentionUsers,
   getUsers,
   importCsv,
   ImportBatch,
@@ -23,6 +24,8 @@ import {
 } from './api';
 import {
   ArrowUpRight,
+  Check,
+  Copy,
   Database,
   FileUp,
   MessageSquare,
@@ -82,6 +85,28 @@ function roleLabel(role?: string | null) {
   return role === 'ADMIN' ? 'ADMIN' : 'END USER';
 }
 
+function buildTicketCopyText(ticket: TicketDetail) {
+  const lines = [
+    `Ticket: ${ticket.ticketKey}`,
+    `Issue Title: ${ticket.issueTitle ?? '—'}`,
+    `Platform: ${ticket.platform ?? '—'}`,
+    `Functionality: ${ticket.functionality ?? '—'}`,
+    `Version Found: ${ticket.versionFound ?? '—'}`,
+    `Build Fixed: ${ticket.buildFixed ?? '—'}`,
+    `Last Imported: ${formatDate(ticket.lastImportedAt)}`,
+    `Last Updated: ${formatDate(ticket.updatedAt)}`,
+    '',
+    'Summary:',
+    ticket.summary ?? '—'
+  ];
+
+  if (ticket.sourceInternalComments) {
+    lines.push('', 'Imported Internal Comments:', ticket.sourceInternalComments);
+  }
+
+  return lines.join('\n');
+}
+
 function normalizeRole(role?: string | null) {
   return roleLabel(role);
 }
@@ -112,7 +137,6 @@ export default function App() {
   const [selectedTicket, setSelectedTicket] = useState<TicketDetail | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [users, setUsers] = useState<AppUser[]>([]);
-  const [currentUserId, setCurrentUserId] = useState<number | ''>('');
   const [imports, setImports] = useState<ImportBatch[]>([]);
   const [search, setSearch] = useState('');
   const [platforms, setPlatforms] = useState<string[]>([]);
@@ -128,20 +152,21 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
-  const [commentUserId, setCommentUserId] = useState<number | ''>('');
+  const [commentAuthorContact, setCommentAuthorContact] = useState('');
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [newUser, setNewUser] = useState<NewUserForm>({ displayName: '', email: '', username: '', role: 'END USER' });
 
-  const currentUser = useMemo(
-    () => users.find(user => user.userId === currentUserId) ?? loggedInUser,
-    [currentUserId, loggedInUser, users]
-  );
-
-  const isAdmin = currentUser?.role === 'ADMIN';
+  const isAdminRoute = window.location.pathname.toLowerCase().startsWith('/admin');
+  const currentUser = loggedInUser;
+  const isAdmin = loggedInUser?.role === 'ADMIN';
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (isAdminRoute) setView('admin');
+  }, [isAdminRoute]);
 
   useEffect(() => {
     if (!token) return;
@@ -154,41 +179,24 @@ export default function App() {
       });
   }, [token]);
 
-  useEffect(() => {
-    if (users.length === 0) return;
-
-    setCurrentUserId(previous => {
-      const loggedInMatch = loggedInUser
-        ? users.find(user => user.userId === loggedInUser.userId || user.username === loggedInUser.username)
-        : null;
-      if (loggedInMatch) return loggedInMatch.userId;
-      if (previous !== '' && users.some(user => user.userId === previous)) return previous;
-      return users.find(user => user.role === 'ADMIN')?.userId ?? users[0].userId;
-    });
-  }, [loggedInUser, users]);
-
-  useEffect(() => {
-    if (currentUserId !== '') {
-      setCommentUserId(currentUserId);
-    }
-  }, [currentUserId]);
-
-  useEffect(() => {
-    if (view === 'admin' && currentUser && !isAdmin) {
-      setView('search');
-    }
-  }, [currentUser, isAdmin, view]);
 
   const refreshMetadata = useCallback(async () => {
     try {
-      const [meta, userList, importList] = await Promise.all([getMetadata(), getUsers(), getImports()]);
+      const [meta, mentionUsers] = await Promise.all([getMetadata(), getMentionUsers()]);
       setMetadata(meta);
-      setUsers(userList);
-      setImports(importList);
+      setUsers(mentionUsers);
+
+      if (isAdminRoute && token) {
+        const [adminUsers, importList] = await Promise.all([getUsers(), getImports()]);
+        setUsers(adminUsers);
+        setImports(importList);
+      } else {
+        setImports([]);
+      }
     } catch (ex) {
       setError(ex instanceof Error ? ex.message : 'Unable to load metadata.');
     }
-  }, []);
+  }, [isAdminRoute, token]);
 
   const loadTickets = useCallback(async () => {
     setLoading(true);
@@ -221,15 +229,15 @@ export default function App() {
   }, [buildFixedValues, functionalities, hasComments, inProcessOnly, page, platforms, search, sort, versionFoundValues]);
 
   useEffect(() => {
-    if (token) refreshMetadata();
-  }, [refreshMetadata, token]);
+    refreshMetadata();
+  }, [refreshMetadata]);
 
   useEffect(() => {
-    if (token) loadTickets();
-  }, [loadTickets, token]);
+    loadTickets();
+  }, [loadTickets]);
 
   useEffect(() => {
-    if (!token || !selectedKey) {
+    if (!selectedKey) {
       setSelectedTicket(null);
       return;
     }
@@ -237,7 +245,7 @@ export default function App() {
     getTicket(selectedKey)
       .then(setSelectedTicket)
       .catch((ex) => setError(ex instanceof Error ? ex.message : 'Could not load ticket detail.'));
-  }, [selectedKey, token]);
+  }, [selectedKey]);
 
   const dashboardStats = useMemo(() => {
     const total = metadata?.totalTickets ?? 0;
@@ -309,14 +317,14 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const userId = commentUserId === '' ? currentUserId : commentUserId;
       await addComment(
         selectedTicket.ticketKey,
         commentText,
-        userId === '' ? null : Number(userId),
+        commentAuthorContact.trim() || null,
         false
       );
       setCommentText('');
+      setCommentAuthorContact('');
       await refreshSelectedTicket();
       await refreshMetadata();
       await loadTickets();
@@ -329,15 +337,15 @@ export default function App() {
 
   async function handleEditComment(commentId: number, newText: string) {
     if (!newText.trim()) return;
-    if (currentUserId === '') {
-      setError('Select a current testing user before editing comments.');
+    if (!isAdmin) {
+      setError('Only admins can edit comments.');
       return;
     }
 
     setLoading(true);
     setError(null);
     try {
-      await editComment(commentId, newText, Number(currentUserId));
+      await editComment(commentId, newText);
       await refreshSelectedTicket();
       await refreshMetadata();
       await loadTickets();
@@ -349,8 +357,8 @@ export default function App() {
   }
 
   async function handleDeleteComment(commentId: number) {
-    if (currentUserId === '') {
-      setError('Select a current testing user before deleting comments.');
+    if (!isAdmin) {
+      setError('Only admins can delete comments.');
       return;
     }
 
@@ -360,7 +368,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      await deleteComment(commentId, Number(currentUserId));
+      await deleteComment(commentId);
       await refreshSelectedTicket();
       await refreshMetadata();
       await loadTickets();
@@ -433,10 +441,9 @@ export default function App() {
     setTickets([]);
     setSelectedTicket(null);
     setSelectedKey(null);
-    setCurrentUserId('');
   }
 
-  if (!token) {
+  if (isAdminRoute && !token) {
     return (
       <form
         className="login-container"
@@ -475,7 +482,7 @@ export default function App() {
     );
   }
 
-  if (mustChangePassword) {
+  if (isAdminRoute && mustChangePassword) {
     return (
       <form
         className="login-container"
@@ -515,6 +522,38 @@ export default function App() {
     );
   }
 
+  if (isAdminRoute && token && !loggedInUser) {
+    return (
+      <div className="login-container">
+        <div className="brand-card">
+          <div className="brand-mark">JH</div>
+          <div>
+            <h1>JIRA Hub</h1>
+            <p>Loading admin session</p>
+          </div>
+        </div>
+        <p className="hint">Checking admin session...</p>
+      </div>
+    );
+  }
+
+  if (isAdminRoute && token && loggedInUser && !isAdmin) {
+    return (
+      <div className="login-container">
+        <div className="brand-card">
+          <div className="brand-mark">JH</div>
+          <div>
+            <h1>JIRA Hub</h1>
+            <p>Admin access required</p>
+          </div>
+        </div>
+        <p className="error">This account is not an ADMIN account.</p>
+        <button type="button" onClick={handleLogout}>Log out</button>
+        <button type="button" className="secondary" onClick={() => { window.location.href = '/'; }}>Back to public app</button>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -527,27 +566,28 @@ export default function App() {
         </div>
 
         <nav className="nav-list">
-          <button className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>Dashboard</button>
-          <button className={view === 'search' ? 'active' : ''} onClick={() => setView('search')}>Search</button>
-          {isAdmin && <button className={view === 'admin' ? 'active' : ''} onClick={() => setView('admin')}>Admin</button>}
+          {!isAdminRoute && <button className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>Dashboard</button>}
+          {!isAdminRoute && <button className={view === 'search' ? 'active' : ''} onClick={() => setView('search')}>Search</button>}
+          {isAdminRoute && isAdmin && <button className="active" onClick={() => setView('admin')}>Admin Console</button>}
+          {isAdminRoute && <button onClick={() => { window.location.href = '/'; }}>Public Search</button>}
         </nav>
 
         <div className="user-switcher">
           <div className="section-title compact">
             <div>
-              <label>Signed in user</label>
-              <p className="muted-small">Admin functions show only for ADMIN users.</p>
+              <label>{isAdminRoute ? 'Admin session' : 'Public access'}</label>
+              <p className="muted-small">{isAdminRoute ? 'Admin functions require an ADMIN login.' : 'Search, dashboard, details, and comments are available without login.'}</p>
             </div>
             <Shield size={18} />
           </div>
-          {currentUser ? (
+          {isAdminRoute && currentUser ? (
             <>
               <strong>{currentUser.displayName}</strong>
               <span className="muted-small">@{currentUser.username}</span>
               <span className={isAdmin ? 'role-badge admin' : 'role-badge'}>{roleLabel(currentUser.role)}</span>
             </>
           ) : (
-            <span className="muted-small">Loading account...</span>
+            <span className="muted-small">No login required for the main app.</span>
           )}
         </div>
 
@@ -568,15 +608,17 @@ export default function App() {
       </aside>
 
       <main className="main-panel">
-        <header className="topbar">          <div>
-            <h2>{view === 'dashboard' ? 'Dashboard' : view === 'search' ? 'Search JIRAs/SCRs' : 'Admin Console'}</h2>
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Docker/PostgreSQL powered</p>
+            <h2>{isAdminRoute ? 'Admin Console' : view === 'dashboard' ? 'Dashboard' : 'Search JIRAs/SCRs'}</h2>
           </div>
           <div className="topbar-actions">
-            {currentUser && <span className="auth-chip">{currentUser.displayName} · {roleLabel(currentUser.role)}</span>}
+            {isAdminRoute && currentUser && <span className="auth-chip">{currentUser.displayName} · {roleLabel(currentUser.role)}</span>}
             <button className="secondary" onClick={() => { refreshMetadata(); loadTickets(); }}>
               <RefreshCcw size={16} /> Refresh
             </button>
-            <button className="secondary logout-button" onClick={handleLogout}>Logout</button>
+            {isAdminRoute && <button className="secondary logout-button" onClick={handleLogout}>Logout</button>}
           </div>
         </header>
 
@@ -768,11 +810,11 @@ export default function App() {
             <TicketDetailPanel
               ticket={selectedTicket}
               users={users}
-              currentUser={currentUser}
+              isAdmin={isAdmin}
               commentText={commentText}
               setCommentText={setCommentText}
-              commentUserId={commentUserId}
-              setCommentUserId={setCommentUserId}
+              commentAuthorContact={commentAuthorContact}
+              setCommentAuthorContact={setCommentAuthorContact}
               onAddComment={handleAddComment}
               onEditComment={handleEditComment}
               onDeleteComment={handleDeleteComment}
@@ -780,7 +822,7 @@ export default function App() {
           </section>
         )}
 
-        {view === 'admin' && isAdmin && (
+        {isAdminRoute && isAdmin && (
           <section className="admin-grid">
             <section className="panel-card upload-panel">
               <div className="section-title">
@@ -940,11 +982,11 @@ function MultiFilter({ label, emptyLabel, values, selected, onChange }: MultiFil
 interface TicketDetailPanelProps {
   ticket: TicketDetail | null;
   users: AppUser[];
-  currentUser: AppUser | null;
+  isAdmin: boolean;
   commentText: string;
   setCommentText: (value: string) => void;
-  commentUserId: number | '';
-  setCommentUserId: (value: number | '') => void;
+  commentAuthorContact: string;
+  setCommentAuthorContact: (value: string) => void;
   onAddComment: () => void;
   onEditComment: (commentId: number, commentText: string) => void;
   onDeleteComment: (commentId: number) => void;
@@ -953,21 +995,23 @@ interface TicketDetailPanelProps {
 function TicketDetailPanel({
   ticket,
   users,
-  currentUser,
+  isAdmin,
   commentText,
   setCommentText,
-  commentUserId,
-  setCommentUserId,
+  commentAuthorContact,
+  setCommentAuthorContact,
   onAddComment,
   onEditComment,
   onDeleteComment
 }: TicketDetailPanelProps) {
   const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
   const [editingText, setEditingText] = useState('');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     setEditingCommentId(null);
     setEditingText('');
+    setCopied(false);
   }, [ticket?.ticketKey]);
 
   if (!ticket) {
@@ -980,10 +1024,26 @@ function TicketDetailPanel({
     );
   }
 
-  function canModifyComment(commentUserId?: number | null) {
-    if (!currentUser) return false;
-    if (currentUser.role === 'ADMIN') return true;
-    return commentUserId === currentUser.userId;
+  const currentTicket = ticket;
+
+  async function copyTicketDetails() {
+    const text = buildTicketCopyText(currentTicket);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+    }
+
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
   }
 
   function beginEdit(commentId: number, text: string) {
@@ -1011,6 +1071,11 @@ function TicketDetailPanel({
         </div>
         <span className={ticket.buildFixed?.toUpperCase().includes('IN PROCESS') ? 'pill warning' : 'pill'}>{statusLabel(ticket)}</span>
       </div>
+
+      <button type="button" className="copy-button" onClick={copyTicketDetails}>
+        {copied ? <Check size={16} /> : <Copy size={16} />}
+        {copied ? 'Copied details' : 'Copy ticket details'}
+      </button>
 
       <div className="detail-section">
         <h4>{ticket.issueTitle ?? 'Untitled issue'}</h4>
@@ -1040,6 +1105,14 @@ function TicketDetailPanel({
         </div>
 
         <div className="comment-composer">
+          <label className="follow-up-label">
+            <span>Username / email <em>Add email for follow up on comment</em></span>
+            <input
+              value={commentAuthorContact}
+              onChange={(e) => setCommentAuthorContact(e.target.value)}
+              placeholder="Optional name or email"
+            />
+          </label>
           <textarea
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
@@ -1052,30 +1125,30 @@ function TicketDetailPanel({
                 setCommentText('');
               }
             }}
-            placeholder="Add internal comment... Use @username to mention someone. Ctrl+Enter posts. Comments are searchable."
+            placeholder="Add comment... Use @username to mention someone. Ctrl+Enter posts. Comments are searchable."
           />
           <div className="composer-actions">
-            <span className="auth-chip">Posting as {currentUser?.displayName ?? 'current user'}</span>
+            <span className="auth-chip">Public comment</span>
             <button type="button" disabled={!commentText.trim()} onClick={onAddComment}>Post Comment</button>
           </div>
-          {currentUser && <p className="mention-hint">Current user: {currentUser.displayName} · {roleLabel(currentUser.role)}</p>}
           {users.length > 0 && (
             <p className="mention-hint">Available mentions: {users.slice(0, 6).map(u => `@${u.username}`).join(', ')}</p>
           )}
+          <p className="mention-hint">Only admins can delete comments.</p>
         </div>
 
         <div className="comment-list">
           {ticket.comments.map(comment => {
             const isEditing = editingCommentId === comment.commentId;
-            const canModify = canModifyComment(comment.createdByUserId);
+            const author = comment.createdByDisplayName ?? comment.commentAuthorContact ?? 'Anonymous commenter';
             return (
               <article className="comment-card" key={comment.commentId}>
                 <div className="comment-head">
                   <div>
-                    <strong>{comment.createdByDisplayName ?? 'Local tester'}</strong>
+                    <strong>{author}</strong>
                     <span>{formatDate(comment.createdAt)}{comment.updatedAt ? ` · edited ${formatDate(comment.updatedAt)}` : ''}</span>
                   </div>
-                  {canModify && !isEditing && (
+                  {isAdmin && !isEditing && (
                     <div className="comment-actions">
                       <button className="secondary" onClick={() => beginEdit(comment.commentId, comment.commentText)}><Pencil size={14} /> Edit</button>
                       <button className="secondary danger-button" onClick={() => onDeleteComment(comment.commentId)}><Trash2 size={14} /> Delete</button>

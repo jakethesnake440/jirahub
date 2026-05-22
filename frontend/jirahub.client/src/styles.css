@@ -1188,3 +1188,33 @@ th {
   white-space: nowrap;
   border: 0;
 }
+
+.copy-button {
+  width: 100%;
+  margin: 0 0 16px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: var(--primary-soft);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--primary), var(--border) 45%);
+  font-weight: 800;
+}
+
+.follow-up-label {
+  display: grid;
+  gap: 7px;
+}
+
+.follow-up-label span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.follow-up-label em {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--primary);
+  font-style: normal;
+  font-weight: 900;
+}

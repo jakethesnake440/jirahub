@@ -37,6 +37,7 @@ public class JiraHubDbContext : DbContext
             entity.HasKey(x => x.CommentId);
             entity.HasIndex(x => x.TicketId);
             entity.HasIndex(x => x.CreatedAt);
+            entity.Property(x => x.CommentAuthorContact).HasMaxLength(255);
             entity.HasOne(x => x.Ticket)
                 .WithMany(x => x.Comments)
                 .HasForeignKey(x => x.TicketId)

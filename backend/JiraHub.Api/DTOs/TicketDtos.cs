@@ -37,6 +37,7 @@ public record CommentDto(
     int? CreatedByUserId,
     string? CreatedByDisplayName,
     string? CreatedByUsername,
+    string? CommentAuthorContact,
     DateTime CreatedAt,
     DateTime? UpdatedAt,
     bool IsPinned,
@@ -45,9 +46,9 @@ public record CommentDto(
 
 public record MentionDto(int UserId, string DisplayName, string Username, string? Email);
 
-public record CreateCommentRequest(string CommentText, int? CreatedByUserId, bool IsPinned = false);
+public record CreateCommentRequest(string CommentText, string? CommentAuthorContact, bool IsPinned = false);
 
-public record UpdateCommentRequest(string CommentText, int? UpdatedByUserId);
+public record UpdateCommentRequest(string CommentText);
 
 public record SearchResultDto<T>(IReadOnlyList<T> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 

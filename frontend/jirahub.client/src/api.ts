@@ -51,6 +51,7 @@ export interface Comment {
   createdByUserId?: number | null;
   createdByDisplayName?: string | null;
   createdByUsername?: string | null;
+  commentAuthorContact?: string | null;
   createdAt: string;
   updatedAt?: string | null;
   isPinned: boolean;
@@ -199,30 +200,34 @@ export async function getTicket(ticketKey: string) {
   return request<TicketDetail>(`/api/tickets/${encodeURIComponent(ticketKey)}`);
 }
 
-export async function addComment(ticketKey: string, commentText: string, createdByUserId?: number | null, isPinned = false) {
+export async function addComment(ticketKey: string, commentText: string, commentAuthorContact?: string | null, isPinned = false) {
   return request(`/api/tickets/${encodeURIComponent(ticketKey)}/comments`, {
     method: 'POST',
-    body: JSON.stringify({ commentText, createdByUserId, isPinned })
+    body: JSON.stringify({ commentText, commentAuthorContact, isPinned })
   });
 }
 
-export async function editComment(commentId: number, commentText: string, updatedByUserId?: number | null) {
+export async function editComment(commentId: number, commentText: string) {
   return request(`/api/comments/${commentId}`, {
     method: 'PUT',
-    body: JSON.stringify({ commentText, updatedByUserId })
+    body: JSON.stringify({ commentText })
   });
 }
 
-export async function deleteComment(commentId: number, deletedByUserId?: number | null) {
-  const qs = new URLSearchParams();
-  if (deletedByUserId !== undefined && deletedByUserId !== null) qs.set('deletedByUserId', String(deletedByUserId));
-  return request(`/api/comments/${commentId}?${qs.toString()}`, { method: 'DELETE' });
+export async function deleteComment(commentId: number) {
+  return request(`/api/comments/${commentId}`, { method: 'DELETE' });
 }
 
 export async function getUsers(search?: string) {
   const qs = new URLSearchParams();
   if (search) qs.set('search', search);
   return request<AppUser[]>(`/api/users?${qs.toString()}`);
+}
+
+export async function getMentionUsers(search?: string) {
+  const qs = new URLSearchParams();
+  if (search) qs.set('search', search);
+  return request<AppUser[]>(`/api/mention-users?${qs.toString()}`);
 }
 
 export async function createUser(input: { displayName: string; email?: string; username: string; role?: string }) {
